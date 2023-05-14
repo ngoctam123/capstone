@@ -113,7 +113,7 @@ workflows:
           name: "push-image-to-ecr"
           region: ${AWS_DEFAULT_REGION}
           repo: ${ECR_REPO_NAME}
-          tag: latest
+          tag: '$CIRCLE_SHA1,latest'
           requires:
             - make-image
       - deploy:
