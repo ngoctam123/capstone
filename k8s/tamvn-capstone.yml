@@ -1,0 +1,42 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tamvn-capstone
+  labels:
+    app: tamvn-capstone
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: tamvn-capstone
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      labels:
+        app: tamvn-capstone
+    spec:
+      containers:
+      - name: tamvn-capstone
+        image: 156705469633.dkr.ecr.ap-southeast-1.amazonaws.com/udacity-capstone:latest
+        imagePullPolicy: "Always"
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tamvn-capstone-service
+spec:
+  selector:
+    app: tamvn-capstone
+  type: LoadBalancer
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80

@@ -1,0 +1,120 @@
+version: 2.1
+
+orbs:
+  aws-ecr: circleci/aws-ecr@8.2.1
+
+jobs:
+  test-app:
+    docker:
+      - image: python:3.7.3-stretch
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "requirements.txt" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
+
+      - run:
+          name: Install dependencies
+          command: |
+            python3 -m venv venv
+            . venv/bin/activate
+            make install
+
+      - save_cache:
+          paths:
+            - ./venv
+          key: v1-dependencies-{{ checksum "requirements.txt" }}
+
+      # run lint!
+      - run:
+          name: Run lint
+          command: |
+            . venv/bin/activate
+            make lint           
+
+  make-image:
+    docker:
+      - image: docker:git
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Install OS dependencies
+          command: |
+            apk update
+            apk add bash
+      - run:
+          name: Test Docker image build
+          command: |
+            ./run_docker.sh
+
+  deploy:
+    docker:
+      - image: amazon/aws-cli
+
+    steps:
+      - checkout
+      - run:
+          name: Install OS dependencies
+          command: |
+            yum -y install tar gzip curl
+      - run:
+          name: Install kubectl
+          command: |
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            [ -w /usr/local/bin ] && SUDO="" || SUDO=sudo
+            $SUDO chmod +x ./kubectl
+            $SUDO mv ./kubectl /usr/local/bin
+      - run:
+          name: Install eksctl
+          command: |
+            mkdir temp
+            curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C ./temp
+            [ -w /usr/local/bin ] && SUDO="" || SUDO=sudo
+            $SUDO chmod +x ./temp/eksctl
+            $SUDO mv ./temp/eksctl /usr/local/bin
+            eksctl version
+      - run:
+          name: Get k8s cluster
+          command: |
+            aws eks update-kubeconfig \
+            --region ${AWS_DEFAULT_REGION} \
+            --name tamvn-capstone
+      - attach_workspace:
+          at: ~/
+      - run:
+          name: Deploy application to EKS cluster
+          command: |
+            echo "Kubernetes nodes:"
+            kubectl get nodes
+            # ls -la
+            kubectl apply -f k8s/tamvn-capstone.yml
+            kubectl get deploy,rs,svc,pods
+            kubectl rollout restart deployment/tamvn-capstone
+            kubectl rollout status deployment/tamvn-capstone
+
+workflows:
+  default:
+    jobs:
+      - test-app
+      - make-image:
+          requires: [test-app]
+      - aws-ecr/build-and-push-image:
+          name: "push-image-to-ecr"
+          region: ${AWS_DEFAULT_REGION}
+          repo: ${ECR_REPO_NAME}
+          tag: latest
+          requires:
+            - make-image
+      - deploy:
+          requires: [push-image-to-ecr]
